@@ -1,11 +1,28 @@
 # brz-replay
 
-Add `brz-replay = "0.1"` to your Target's Cargo dependencies.
-
 Use a Replay-controlled wait at a timer site whose behavior depends on
-ordering with external input or dependency requests. Ordinary runs use the
-original Tokio deadline. During Replay, the engine can release that specific
-wait through the Unix socket named by `BRZ_REPLAY_TIMER_SOCKET`.
+ordering with external input or dependency requests. Add the SDK to the
+Target's Cargo dependencies.
+
+```toml
+[dependencies]
+brz-replay = "0.1"
+```
+
+Build the ordinary binary with `cargo build --release` and leave
+`BRZ_REPLAY_TIMER_SOCKET` unset in the build environment. Its waits use
+the original Tokio deadline directly.
+
+Use the managed socket path when building for Replay.
+
+```sh
+BRZ_REPLAY_TIMER_SOCKET=/traffic-e2e/replay/timer.sock cargo build --release
+```
+
+`BRZ_REPLAY_TIMER_SOCKET` selects the build mode. An empty value fails the
+build. A Replay binary uses its compiled-in path unless a nonempty runtime
+setting overrides it. The engine can release a registered wait or direct it to
+use its original Tokio deadline.
 
 ```rust
 use brz_replay::tokio::time::{TimerKey, sleep_until};
@@ -37,5 +54,5 @@ numbers starting at one for each site and stream. When polling a wait in a
 Dropping it cancels the wait.
 
 The release affects this Future. The application still executes its original
-code after it returns. If the configured socket or control protocol fails, the
-Future returns an I/O error.
+code after it returns. In a Replay build, a socket or controller failure
+returns an I/O error.

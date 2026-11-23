@@ -1,8 +1,14 @@
 //! Tokio waits that can be controlled by Replay.
 
 use ::tokio::time::Instant;
+#[cfg(brz_replay_timer)]
+use std::ffi::OsStr;
 use std::io;
+#[cfg(brz_replay_timer)]
 use std::path::Path;
+
+#[cfg(brz_replay_timer)]
+const BUILD_SOCKET: &str = env!("BRZ_REPLAY_TIMER_SOCKET");
 
 /// Identifies one logical wait and the input the Target has processed.
 #[derive(Debug, Clone, Copy)]
@@ -16,21 +22,37 @@ pub struct TimerKey<'a> {
     pub consumed_through: u64,
 }
 
-/// Wait until the Tokio deadline or until the configured Replay engine releases
-/// this wait. A configured controller's failures are returned to the caller.
+/// Wait until the Tokio deadline. Builds with `BRZ_REPLAY_TIMER_SOCKET` set
+/// follow that controller's decision. A nonempty setting at runtime overrides
+/// the build-time socket path in those builds.
 ///
 /// Create and pin one Future per logical wait if it participates in a
 /// `select!` loop. Dropping the Future cancels the wait.
 pub async fn sleep_until(key: TimerKey<'_>, deadline: Instant) -> io::Result<()> {
-    if let Some(path) = std::env::var_os(crate::TIMER_SOCKET_ENV) {
-        return sleep_until_on(Path::new(&path), key, deadline).await;
+    #[cfg(brz_replay_timer)]
+    {
+        let override_path = std::env::var_os(crate::TIMER_SOCKET_ENV);
+        sleep_until_on(timer_socket_path(override_path.as_deref()), key, deadline).await
     }
-    ::tokio::time::sleep_until(deadline).await;
-    Ok(())
+    #[cfg(not(brz_replay_timer))]
+    {
+        let _ = key;
+        ::tokio::time::sleep_until(deadline).await;
+        Ok(())
+    }
+}
+
+#[cfg(brz_replay_timer)]
+fn timer_socket_path(override_path: Option<&OsStr>) -> &Path {
+    Path::new(
+        override_path
+            .filter(|path| !path.is_empty())
+            .unwrap_or(OsStr::new(BUILD_SOCKET)),
+    )
 }
 
 /// Wait using the given Replay timer socket.
-#[cfg(unix)]
+#[cfg(all(brz_replay_timer, unix))]
 pub async fn sleep_until_on(socket: &Path, key: TimerKey<'_>, deadline: Instant) -> io::Result<()> {
     use crate::wire::{self, End, Outcome, Registration, VERSION};
     use ::tokio::{io::BufReader, net::UnixStream};
@@ -58,7 +80,7 @@ pub async fn sleep_until_on(socket: &Path, key: TimerKey<'_>, deadline: Instant)
 }
 
 /// Wait using the given Replay timer socket.
-#[cfg(not(unix))]
+#[cfg(all(brz_replay_timer, not(unix)))]
 pub async fn sleep_until_on(_: &Path, _: TimerKey<'_>, _: Instant) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -66,5 +88,5 @@ pub async fn sleep_until_on(_: &Path, _: TimerKey<'_>, _: Instant) -> io::Result
     ))
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests;

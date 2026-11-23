@@ -1,8 +1,14 @@
 use super::*;
+#[cfg(all(brz_replay_timer, unix))]
 use crate::wire::{self, End, Outcome, Registration};
+#[cfg(all(brz_replay_timer, unix))]
 use ::tokio::{io::BufReader, net::UnixListener, time::timeout};
-use std::{path::PathBuf, time::Duration};
+#[cfg(all(brz_replay_timer, unix))]
+use std::path::PathBuf;
+#[cfg(any(not(brz_replay_timer), unix))]
+use std::time::Duration;
 
+#[cfg(all(brz_replay_timer, unix))]
 fn socket() -> (tempfile::TempDir, PathBuf, UnixListener) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("timer.sock");
@@ -10,6 +16,7 @@ fn socket() -> (tempfile::TempDir, PathBuf, UnixListener) {
     (directory, path, listener)
 }
 
+#[cfg(any(not(brz_replay_timer), unix))]
 fn key() -> TimerKey<'static> {
     TimerKey {
         case_id: "case",
@@ -20,6 +27,28 @@ fn key() -> TimerKey<'static> {
     }
 }
 
+#[cfg(not(brz_replay_timer))]
+#[::tokio::test(start_paused = true)]
+async fn ordinary_build_waits_until_the_tokio_deadline() {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    sleep_until(key(), deadline).await.unwrap();
+    assert!(Instant::now() >= deadline);
+}
+
+#[cfg(brz_replay_timer)]
+#[test]
+fn replay_build_uses_its_socket_unless_overridden_at_runtime() {
+    let default_path = Path::new(BUILD_SOCKET);
+    assert_eq!(timer_socket_path(None), default_path);
+    assert_eq!(timer_socket_path(Some(OsStr::new(""))), default_path);
+    let override_path = Path::new("/tmp/replay-timer-test.sock");
+    assert_eq!(
+        timer_socket_path(Some(override_path.as_os_str())),
+        override_path
+    );
+}
+
+#[cfg(all(brz_replay_timer, unix))]
 #[::tokio::test]
 async fn releases_one_wait_without_waiting_for_its_wall_clock_deadline() {
     let (_directory, path, listener) = socket();
@@ -50,6 +79,7 @@ async fn releases_one_wait_without_waiting_for_its_wall_clock_deadline() {
     result.unwrap();
 }
 
+#[cfg(all(brz_replay_timer, unix))]
 #[::tokio::test(start_paused = true)]
 async fn wall_clock_response_preserves_the_original_deadline() {
     let (_directory, path, listener) = socket();
@@ -68,6 +98,7 @@ async fn wall_clock_response_preserves_the_original_deadline() {
     assert!(Instant::now() >= deadline);
 }
 
+#[cfg(all(brz_replay_timer, unix))]
 #[::tokio::test]
 async fn dropping_the_wait_closes_the_connection_without_an_end_receipt() {
     let (_directory, path, listener) = socket();
@@ -87,6 +118,7 @@ async fn dropping_the_wait_closes_the_connection_without_an_end_receipt() {
     assert_eq!(closed.kind(), io::ErrorKind::UnexpectedEof);
 }
 
+#[cfg(all(brz_replay_timer, unix))]
 #[::tokio::test]
 async fn controller_errors_reach_the_target() {
     let (_directory, path, listener) = socket();
